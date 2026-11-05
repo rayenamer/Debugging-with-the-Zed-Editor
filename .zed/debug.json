@@ -1,0 +1,9 @@
+[
+  {
+    "label": "Attach to Quarkus (port 5005)",
+    "adapter": "Java",
+    "request": "attach",
+    "hostName": "localhost",
+    "port": 5005
+  }
+]
