@@ -96,7 +96,8 @@ Click the gutter or press `f9` on these lines:
 
 1. Open http://localhost:8080/docs and send `GET /total` with `prices` 10, 20, 30 and `discount` 10.
 2. The response stays pending while the code is paused. That's normal.
-3. Step with `f10` (over), `f11` (into) and `f5` (continue), and watch the variables until one is wrong.
+3. At `PriceResource.java:18`, check the input, then press `f5` (continue) to reach `PriceService.java:8`.
+4. Step with `f10` (over) and watch the variables until one is wrong.
 
 ### Step actions
 
@@ -105,6 +106,7 @@ Click the gutter or press `f9` on these lines:
 | Step over | `f10` | Runs the whole line, including any method it calls, then stops on the next line |
 | Step into | `f11` | Goes inside the method being called and stops on its first line |
 | Step out | `shift-f11` | Finishes the current method and stops back where it was called |
+| Continue | `f5` | Runs until the next breakpoint, or until the request finishes |
 
 In your code, suppose you're paused at line 18 of `PriceResource.java`:
 
@@ -113,7 +115,8 @@ return priceService.total(prices, discount);
 ```
 
 - **Step over:** `total()` runs completely, with its loop and calculation happening without a stop. You don't see any of it unless a breakpoint inside it is hit.
-- **Step into:** you go inside `PriceService.total()` and can follow it line by line.
-- **Step out:** once inside `total()`, this runs the rest of the method and takes you back to line 18.
+- **Step into:** you land in `PriceService_ClientProxy`, a class Quarkus generates between your two classes, not in `total()`. Stepping into again goes deeper into Quarkus code.
+- **Continue:** use this to reach your own code. It stops at the breakpoint on `PriceService.java:8`, and also gets you out if you end up in Quarkus code.
+- **Step out:** once inside `total()`, this runs the rest of the method and takes you back towards line 18. If you stop in `PriceService_ClientProxy` first, step out again.
 
 </details>
