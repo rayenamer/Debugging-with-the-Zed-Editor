@@ -1,10 +1,6 @@
 from fastapi import FastAPI
 
-from orders import build_order
+from api.orders import router
 
-app = FastAPI()
-
-
-@app.get("/order")
-def order(item: str):
-    return build_order(item)
+app = FastAPI(title="Order Service")
+app.include_router(router)

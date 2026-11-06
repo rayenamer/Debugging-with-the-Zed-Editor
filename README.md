@@ -191,9 +191,21 @@ Press **Continue** if your breakpoint on line 8 is still ahead of you. Your code
 
 ```mermaid
 flowchart LR
-    client[Browser or curl] <-->|port 8000| app[FastAPI app]
+    client[Browser or curl] <-->|port 8000| api
+    subgraph app[FastAPI app]
+        api[API] <--> service[Service]
+        service <--> domain[Domain]
+        service <--> data[Data]
+    end
     zed[Zed debugger] <-->|debugpy| app
 ```
+
+| Layer | File | Role |
+|---|---|---|
+| API | `api/orders.py`, `api/schemas.py` | Routes and request validation |
+| Service | `services/order_service.py` | Builds and places an order |
+| Domain | `domain/pricing.py` | Discounts and totals |
+| Data | `data/catalog.py`, `data/order_repository.py` | Products, stock and orders, kept in memory |
 
 Zed starts this service itself, so don't run it in a terminal while debugging.
 
@@ -210,7 +222,9 @@ python3 -m venv .venv
 | URL | Purpose |
 |---|---|
 | http://localhost:8000/docs | API explorer (built into FastAPI) |
-| http://localhost:8000/order?item=apple | Creates an order and should return one item |
+| `GET /products` | Products, prices and stock |
+| `POST /orders` | Places an order |
+| `GET /orders` | Saved orders |
 
 <details>
 <summary><strong>Debugging guide (click to show or hide)</strong></summary>
@@ -252,26 +266,40 @@ Press `f4` and choose **Run Python service (port 8000)**.
 
 ### 4. Set a breakpoint
 
-Click the gutter or press `f9` on these lines:
+Click the gutter or press `f9` on this line, then follow the request down through the layers:
 
 | File | Line | Code | Meaning |
 |---|---|---|---|
-| `python service/main.py` | 10 | `return build_order(item)` | Stops before calling `build_order`, to check the input |
-| `python service/orders.py` | 2 | `items.append(item)` | Stops before the item is added |
+| `python service/api/orders.py` | 25 | `return order_service.place_order(...)` | Stops before the request enters the service layer |
 
-### 5. Find the bug
+### 5. Find the bugs
 
-1. Open http://localhost:8000/docs and send `GET /order` with `item` set to `apple`. Each request should create a new order with one item.
-2. The response stays pending while the code is paused. That's normal.
-3. Press `f5` (continue) until the response arrives.
-4. Send `GET /order` again with `item` set to `banana`.
-5. Step with `f10` (over) and watch the variables until one is wrong.
+The service has **4 deliberate bugs**. It should follow these rules:
+
+| Rule | Example |
+|---|---|
+| An order contains only the items from its own request | The second order doesn't include the first order's items |
+| `gold` customers pay 10% less, and catalog prices never change | `apple` always costs `2.0` in `GET /products` |
+| A line with 10 or more units gets 5% off | 10 apples cost `19.0` |
+| A failed order changes nothing | Stock is the same as before the request |
+
+Send orders to `POST /orders`:
+
+```json
+{
+  "customer": "alice",
+  "tier": "gold",
+  "items": [{ "sku": "apple", "quantity": 2 }]
+}
+```
+
+Products are `apple`, `pear` and `mango`. A request stays pending while the code is paused, which is normal. Data is kept in memory, so restart the debugger with `shift-f5` then `f4` for a clean start, and after any code change.
 
 ### Step actions
 
 | Action | Key | What it does |
 |---|---|---|
-| Step over | `f10` | Runs the whole line, including any method it calls, then stops on the next line |
+| Step over | `f10` | Runs the whole line, including any function it calls, then stops on the next line |
 | Step into | `f11` | Goes inside the function being called |
 | Step out | `shift-f11` | Finishes the current function and stops back where it was called |
 | Continue | `f5` | Runs until the next breakpoint, or until the request finishes |
@@ -279,47 +307,71 @@ Click the gutter or press `f9` on these lines:
 </details>
 
 <details>
-<summary><strong>What I did (shows the bug, click to show or hide)</strong></summary>
+<summary><strong>What I did (shows the bugs, click to show or hide)</strong></summary>
 
-Each order should contain only the item you just sent. **The highlighted line hasn't run yet**, so its result only shows up after your next action.
+Restart the debugger before each bug. **The highlighted line hasn't run yet**, so its result only shows up after your next action.
 
-#### 1. First request: `item=apple`
+#### Bug 1: orders include earlier orders' items
 
-| Action | Now stopped on | `item` | `items` |
-|---|---|---|---|
-| Send the request | `main.py:10` | `apple` | – |
-| Continue | `orders.py:2` | `apple` | `[]` |
-| Step over | `orders.py:3` | `apple` | `['apple']` |
-| Continue | Request finishes | – | – |
+Send `alice` with 1 `apple`, then `bob` with 1 `pear`, both `standard`. The second total should be `1.5`, but it's `3.5` with 2 lines.
 
-The response is `{"items":["apple"],"count":1}`, which is correct.
+| Breakpoint | Action | Check |
+|---|---|---|
+| `services/order_service.py:11` during `bob`'s request | Look at `order` | `order["lines"]` already holds the apple before anything is added |
 
-#### 2. Second request: `item=banana`
-
-| Action | Now stopped on | `item` | `items` |
-|---|---|---|---|
-| Send the request | `main.py:10` | `banana` | – |
-| Continue | `orders.py:2` | `banana` | **`['apple']`, should be `[]`** |
-| Step over | `orders.py:3` | `banana` | `['apple', 'banana']` |
-| Continue | Request finishes | – | – |
-
-The response is `{"items":["apple","banana"],"count":2}`, which is wrong.
-
-`items` already holds `apple` before anything is added. Python creates the default `items=[]` once, when the function is defined, so every call shares the same list.
-
-#### 3. The fix
-
-Change `orders.py` and save:
+The default `lines=[]` in `_new_order` is created once, so every order shares the same list.
 
 ```python
-def build_order(item, items=None):
-    if items is None:
-        items = []
-    items.append(item)
-    return {"items": items, "count": len(items)}
+def _new_order(customer):
+    return {"customer": customer, "lines": []}
 ```
 
-Stop the debugger with `shift-f5`, because this config doesn't reload code. Press `f4` to start again, then send both requests. Each response now has one item and a count of 1.
+#### Bug 2: a gold order changes the catalog price
+
+Send a `gold` order for 2 `apple`. The response is correct (`unit_price` `1.8`, `total` `3.6`), but `GET /products` now shows `apple` at `1.8` instead of `2.0`, and each gold order lowers it further.
+
+| Breakpoint | Action | Check |
+|---|---|---|
+| `domain/pricing.py:8` | Look at `product["price"]`, then Step over | It goes from `2.0` to `1.8` |
+
+`find_product` returns the catalog's own dictionary, so `apply_tier` is changing the catalog itself.
+
+```python
+def apply_tier(product, tier):
+    rate = TIER_RATES.get(tier, 0.0)
+    return {**product, "price": round(product["price"] * (1 - rate), 2)}
+```
+
+#### Bug 3: exactly 10 units gets no bulk discount
+
+Send a `standard` order for 10 `apple`. The total should be `19.0`, but it's `20.0`.
+
+| Breakpoint | Action | Check |
+|---|---|---|
+| `domain/pricing.py:14` | Step over | `quantity` is `10`, and the discount line is skipped |
+
+`10 > 10` is false. Change line 14 in `domain/pricing.py`:
+
+```python
+if quantity >= BULK_MIN_QUANTITY:
+```
+
+#### Bug 4: a failed order still takes stock
+
+Send a `standard` order with 2 `apple` and 99 `mango`. You get a `400`, which is correct, but `GET /products` shows `apple` stock at `18` instead of `20`.
+
+| Breakpoint | Action | Check |
+|---|---|---|
+| `services/order_service.py:31` | Continue through both items | Apple's stock is reduced on the first pass, then mango raises `OrderError` on the second |
+
+Stock is reduced before the whole order is known to be valid. Remove line 31 from `_build_line`, and reduce stock in `place_order` once every line has been built:
+
+```python
+for item in items:
+    order["lines"].append(_build_line(item, tier))
+for line in order["lines"]:
+    catalog.reduce_stock(line["sku"], line["quantity"])
+```
 
 </details>
 
